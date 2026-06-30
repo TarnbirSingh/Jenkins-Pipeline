@@ -9,7 +9,7 @@ package_upgrade: false
 
 # Verzeichnisse vor write_files anlegen (bootcmd läuft VOR write_files)
 bootcmd:
-  - mkdir -p /opt/cloudstore /etc/cloudstore /var/lib/jenkins/init.groovy.d
+  - mkdir -p /opt/cloudstore /etc/cloudstore /var/lib/jenkins/init.groovy.d /etc/systemd/system/jenkins.service.d
 
 packages:
   - curl
@@ -153,6 +153,13 @@ write_files:
       systemctl restart jenkins
       echo "CloudStore: Jenkins Setup abgeschlossen."
 
+  # Systemd Drop-in: Setup-Wizard deaktivieren via JAVA_OPTS
+  - path: /etc/systemd/system/jenkins.service.d/override.conf
+    permissions: '0644'
+    content: |
+      [Service]
+      Environment="JAVA_OPTS=-Djenkins.install.runSetupWizard=false"
+
   # Systemd-Unit für den Setup-Service
   - path: /etc/systemd/system/cloudstore-jenkins-setup.service
     permissions: '0644'
@@ -183,17 +190,21 @@ runcmd:
   - echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/" | tee /etc/apt/sources.list.d/jenkins.list > /dev/null
   - apt-get update -qq
 
-  # Jenkins installieren (Setup-Wizard überspringen)
+  # Jenkins installieren (pinned auf LTS-Version, Fallback auf latest)
   - |
-    JAVA_OPTS="-Djenkins.install.runSetupWizard=false" \
-    apt-get install -y jenkins=${jenkins_version}
+    if apt-cache show jenkins=${jenkins_version} > /dev/null 2>&1; then
+      apt-get install -y jenkins=${jenkins_version}
+    else
+      echo "WARN: jenkins=${jenkins_version} nicht gefunden, installiere latest"
+      apt-get install -y jenkins
+    fi
 
-  # Jenkins starten
+  # Systemd neu laden damit Drop-in wirkt, dann Jenkins starten
+  - systemctl daemon-reload
   - systemctl enable jenkins
   - systemctl start jenkins
 
-  # Setup-Service aktivieren
-  - systemctl daemon-reload
+  # Setup-Service aktivieren (After=jenkins.service sichert die Reihenfolge)
   - systemctl enable cloudstore-jenkins-setup.service
   - systemctl start cloudstore-jenkins-setup.service
 
