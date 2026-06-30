@@ -1,0 +1,204 @@
+#cloud-config
+
+# Jenkins CI/CD Server Setup
+# Installiert Jenkins LTS, legt Dozenten- und Studierenden-Accounts per
+# Groovy Init-Script an und konfiguriert optional einen Freestyle-Job.
+
+package_update: true
+package_upgrade: false
+
+# Verzeichnisse vor write_files anlegen (bootcmd läuft VOR write_files)
+bootcmd:
+  - mkdir -p /opt/cloudstore /etc/cloudstore /var/lib/jenkins/init.groovy.d
+
+packages:
+  - curl
+  - ca-certificates
+  - tzdata
+  - ufw
+  - openjdk-17-jdk
+
+write_files:
+  # Credentials-Referenz für den Admin
+  - path: /etc/cloudstore/jenkins_info.txt
+    permissions: '0600'
+    content: |
+      CloudStore Jenkins CI/CD Deployment
+      ====================================
+      App:     ${app_name}
+      Version: ${jenkins_version}
+      URL:     http://${floating_ip}:8080
+
+      Admin
+      -----
+      Username: ${admin_username}
+      Email:    ${admin_email}
+      Password: ${admin_password}
+
+      Studierende
+      -----------
+      %{ for s in students ~}
+      ${s.username} / ${s.email} / ${s.password}
+      %{ endfor ~}
+
+  # Groovy Init-Script: Security Realm + Admin-Account
+  - path: /var/lib/jenkins/init.groovy.d/01-security.groovy
+    permissions: '0644'
+    content: |
+      import jenkins.model.*
+      import hudson.security.*
+
+      def instance = Jenkins.getInstance()
+
+      def hudsonRealm = new HudsonPrivateSecurityRealm(false)
+      hudsonRealm.createAccount('${admin_username}', '${admin_password}')
+      instance.setSecurityRealm(hudsonRealm)
+
+      def strategy = new FullControlOnceLoggedInAuthorizationStrategy()
+      strategy.setAllowAnonymousRead(false)
+      instance.setAuthorizationStrategy(strategy)
+      instance.save()
+
+      println "CloudStore: Security Realm konfiguriert."
+
+  # Groovy Init-Script: Studierende anlegen (Developer-Rechte via Matrix)
+  - path: /var/lib/jenkins/init.groovy.d/02-users.groovy
+    permissions: '0644'
+    content: |
+      import jenkins.model.*
+      import hudson.security.*
+
+      def instance = Jenkins.getInstance()
+      def realm = instance.getSecurityRealm()
+
+      %{ for s in students ~}
+      if (!realm.loadUserByUsername('${s.username}')) {
+        realm.createAccount('${s.username}', '${s.password}')
+        println "CloudStore: User ${s.username} angelegt."
+      }
+      %{ endfor ~}
+
+      instance.save()
+      println "CloudStore: Alle Studierenden-Accounts angelegt."
+
+  # Groovy Init-Script: Optional Freestyle-Job für Git-Repo anlegen
+  - path: /var/lib/jenkins/init.groovy.d/03-job.groovy
+    permissions: '0644'
+    content: |
+      %{ if git_repo_url != "" ~}
+      import jenkins.model.*
+      import hudson.model.*
+      import hudson.plugins.git.*
+
+      def instance = Jenkins.getInstance()
+
+      if (!instance.getItem('initial-pipeline')) {
+        def jobConfig = """<?xml version='1.1' encoding='UTF-8'?>
+      <project>
+        <description>Initialer Job aus CloudStore-Deployment (${app_name})</description>
+        <keepDependencies>false</keepDependencies>
+        <scm class="hudson.plugins.git.GitSCM">
+          <configVersion>2</configVersion>
+          <userRemoteConfigs>
+            <hudson.plugins.git.UserRemoteConfig>
+              <url>${git_repo_url}</url>
+            </hudson.plugins.git.UserRemoteConfig>
+          </userRemoteConfigs>
+          <branches>
+            <hudson.plugins.git.BranchSpec>
+              <name>*/main</name>
+            </hudson.plugins.git.BranchSpec>
+          </branches>
+        </scm>
+        <builders/>
+        <publishers/>
+        <buildWrappers/>
+      </project>"""
+
+        def xml = new ByteArrayInputStream(jobConfig.bytes)
+        instance.createProjectFromXML('initial-pipeline', xml)
+        println "CloudStore: Freestyle-Job 'initial-pipeline' angelegt."
+      }
+      %{ else ~}
+      println "CloudStore: Kein Git-Repo konfiguriert, kein Job angelegt."
+      %{ endif ~}
+
+  # Setup-Script: wartet auf Jenkins und setzt URL
+  - path: /opt/cloudstore/setup_jenkins.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -e
+
+      echo "CloudStore: Warte auf Jenkins..."
+      until curl -sf http://localhost:8080/login > /dev/null 2>&1; do
+        sleep 10
+      done
+      echo "CloudStore: Jenkins ist bereit."
+
+      # Jenkins URL in Konfiguration setzen
+      JENKINS_URL_FILE=/var/lib/jenkins/jenkins.model.JenkinsLocationConfiguration.xml
+      if [ -f "$JENKINS_URL_FILE" ]; then
+        sed -i "s|<jenkinsUrl>.*</jenkinsUrl>|<jenkinsUrl>http://${floating_ip}:8080/</jenkinsUrl>|" "$JENKINS_URL_FILE"
+      else
+        cat > "$JENKINS_URL_FILE" << 'XMLEOF'
+      <?xml version='1.1' encoding='UTF-8'?>
+      <jenkins.model.JenkinsLocationConfiguration>
+        <adminAddress>address not configured yet &lt;nobody@nowhere&gt;</adminAddress>
+        <jenkinsUrl>http://${floating_ip}:8080/</jenkinsUrl>
+      </jenkins.model.JenkinsLocationConfiguration>
+      XMLEOF
+      fi
+
+      systemctl restart jenkins
+      echo "CloudStore: Jenkins Setup abgeschlossen."
+
+  # Systemd-Unit für den Setup-Service
+  - path: /etc/systemd/system/cloudstore-jenkins-setup.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=CloudStore Jenkins Setup
+      After=jenkins.service
+      Requires=jenkins.service
+
+      [Service]
+      Type=oneshot
+      ExecStart=/opt/cloudstore/setup_jenkins.sh
+      RemainAfterExit=yes
+      StandardOutput=journal
+      StandardError=journal
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  # UFW Firewall
+  - ufw --force enable
+  - ufw allow 22/tcp
+  - ufw allow 8080/tcp
+
+  # Jenkins Debian-Repository einrichten
+  - curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key | tee /usr/share/keyrings/jenkins-keyring.asc > /dev/null
+  - echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/" | tee /etc/apt/sources.list.d/jenkins.list > /dev/null
+  - apt-get update -qq
+
+  # Jenkins installieren (Setup-Wizard überspringen)
+  - |
+    JAVA_OPTS="-Djenkins.install.runSetupWizard=false" \
+    apt-get install -y jenkins=${jenkins_version}
+
+  # Jenkins starten
+  - systemctl enable jenkins
+  - systemctl start jenkins
+
+  # Setup-Service aktivieren
+  - systemctl daemon-reload
+  - systemctl enable cloudstore-jenkins-setup.service
+  - systemctl start cloudstore-jenkins-setup.service
+
+final_message: |
+  Jenkins ${jenkins_version} wurde installiert.
+  App: ${app_name}
+  URL: http://${floating_ip}:8080
+  Setup läuft via cloudstore-jenkins-setup.service.

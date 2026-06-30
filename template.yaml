@@ -1,0 +1,148 @@
+name: "jenkins-ci-cd"
+display_name: "Jenkins CI/CD Server"
+description: "Jenkins CI/CD Server mit automatisch angelegten Benutzeraccounts für Dozenten und Studierende. Optional kann ein Git-Repository als initiale Pipeline-Quelle hinterlegt werden."
+version: "1.0.0"
+category: "education"
+author: "DHBW CloudStore Team"
+icon: jenkins.png
+
+terraform:
+  working_dir: terraform/
+  required_version: ">= 1.6.0"
+
+email_credentials:
+  enabled: true
+
+tags:
+  - jenkins
+  - ci-cd
+  - devops
+  - education
+
+parameters:
+  # --- Allgemein ---
+  - name: app_name
+    type: string
+    description: "Name der Jenkins-Instanz (z.B. wwi23sea-jenkins)"
+    required: true
+    validation:
+      pattern: "^[a-z0-9-]{3,20}$"
+    x-ui:
+      group: "Allgemein"
+      order: 1
+      icon: Server
+      placeholder: "z.B. wwi23sea-jenkins"
+      hint: "Nur Kleinbuchstaben, Zahlen und Bindestriche (3-20 Zeichen)"
+
+  - name: admin_email
+    type: string
+    description: "E-Mail des Dozenten (erhält Jenkins-Admin-Rechte)"
+    required: true
+    validation:
+      pattern: "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"
+    x-ui:
+      group: "Allgemein"
+      order: 2
+      icon: Users
+      placeholder: "dozent@dhbw-mannheim.de"
+      widget: user-picker
+      multi: false
+      extract: email
+
+  - name: student_emails
+    type: array
+    description: "E-Mails der Studierenden (erhalten Jenkins-Developer-Accounts)"
+    required: true
+    validation:
+      min_items: 1
+      max_items: 30
+    x-ui:
+      group: "Allgemein"
+      order: 3
+      icon: Users
+      widget: user-picker
+      multi: true
+      extract: email
+
+  # --- Ressourcen ---
+  - name: flavor_name
+    type: selection
+    description: "VM-Größe"
+    required: true
+    options:
+      - label: "Small (1 CPU, 2GB RAM)"
+        value: "gp1.small"
+      - label: "Medium (2 CPU, 4GB RAM)"
+        value: "gp1.medium"
+      - label: "Large (4 CPU, 8GB RAM)"
+        value: "gp1.large"
+    default: "gp1.medium"
+    x-ui:
+      group: "Ressourcen"
+      order: 1
+      icon: Cpu
+      hint: "Für Kursgruppen bis 30 Personen wird Medium empfohlen"
+
+  # --- Jenkins-Optionen ---
+  - name: jenkins_version
+    type: string
+    description: "Jenkins LTS Paketversion (z.B. 2.504.1)"
+    required: false
+    default: "2.504.1"
+    x-ui:
+      group: "Jenkins-Optionen"
+      order: 1
+      icon: Server
+      placeholder: "2.504.1"
+      hint: "LTS-Paketversion aus dem offiziellen Jenkins Debian-Repository"
+
+  - name: git_repo_url
+    type: string
+    description: "Git Repository URL (wird als initialer Freestyle-Job angelegt)"
+    required: false
+    validation:
+      pattern: "^https?://.*\\.git$|^$"
+    x-ui:
+      group: "Jenkins-Optionen"
+      order: 2
+      icon: Server
+      placeholder: "https://github.com/org/repo.git"
+      hint: "Optional: Ein Freestyle-Job wird automatisch mit diesem Repository angelegt"
+
+outputs:
+  # SYSTEM PFLICHTFELDER (Hidden)
+  - name: instance_id
+    description: "System ID der Instanz"
+    display: false
+
+  - name: app_name
+    description: "Name der Anwendung"
+    display: true
+
+  # USER OUTPUTS
+  - name: jenkins_url
+    description: "Jenkins Web-Oberfläche"
+    display: true
+
+  - name: ssh_command
+    description: "SSH-Zugang zur VM"
+    display: true
+
+  - name: admin_credentials
+    description: "Admin-Zugangsdaten (Dozent)"
+    sensitive: true
+    display: false
+
+  - name: student_credentials
+    description: "Studierenden-Zugangsdaten"
+    sensitive: true
+    display: false
+
+  - name: ssh_private_key
+    description: "SSH Private Key"
+    sensitive: true
+    display: false
+
+estimated_costs:
+  hourly: "0.05 - 0.15 EUR"
+  monthly: "40 - 110 EUR"
