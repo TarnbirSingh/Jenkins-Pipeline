@@ -185,13 +185,16 @@ runcmd:
   - ufw allow 22/tcp
   - ufw allow 8080/tcp
 
-  # Jenkins Debian-Repository einrichten
-  - curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key | tee /usr/share/keyrings/jenkins-keyring.asc > /dev/null
-  - echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/" | tee /etc/apt/sources.list.d/jenkins.list > /dev/null
-  - apt-get update -qq
-
-  # Jenkins aus LTS-Repo installieren (debian-stable liefert immer LTS)
-  - apt-get install -y jenkins
+  # Jenkins Debian-Repository einrichten und installieren
+  - |
+    set -e
+    mkdir -p /usr/share/keyrings
+    curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key \
+      | gpg --dearmor -o /usr/share/keyrings/jenkins-keyring.gpg
+    echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.gpg] https://pkg.jenkins.io/debian-stable binary/" \
+      > /etc/apt/sources.list.d/jenkins.list
+    apt-get update -qq
+    apt-get install -y jenkins
 
   # Systemd neu laden damit Drop-in wirkt, dann Jenkins starten
   - systemctl daemon-reload
