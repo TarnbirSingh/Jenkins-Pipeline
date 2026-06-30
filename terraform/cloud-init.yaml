@@ -187,10 +187,12 @@ runcmd:
   - ufw allow 8080/tcp
 
   # Jenkins Debian-Repository einrichten und installieren
+  # Der jenkins.io-2023.key ist seit 2026-03-26 abgelaufen.
+  # Neuer Key (7198F4B714ABFC68) direkt vom Ubuntu-Keyserver holen.
   - |
     set -e
     mkdir -p /usr/share/keyrings
-    curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key \
+    curl -fsSL 'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x7198F4B714ABFC68' \
       -o /usr/share/keyrings/jenkins-keyring.asc
     echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/" \
       > /etc/apt/sources.list.d/jenkins.list
